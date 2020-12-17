@@ -52,11 +52,7 @@ uint8_t RFM69_spi_txbuff[RFM69_MAX_PACKET_LEN + 1];
 
 LOCAL void RFM69_csn(const bool level)
 {
-#if defined(__linux__)
-	(void)level;
-#else
 	hwDigitalWrite(MY_RFM69_CS_PIN, level);
-#endif
 }
 
 LOCAL void RFM69_prepareSPITransaction(void)
@@ -207,10 +203,8 @@ LOCAL bool RFM69_initialise(const uint32_t frequencyHz)
 	RFM69.ATCtargetRSSI = RFM69_RSSItoInternal(MY_RFM69_ATC_TARGET_RSSI_DBM);
 
 	// SPI init
-#if !defined(__linux__)
 	hwDigitalWrite(MY_RFM69_CS_PIN, HIGH);
 	hwPinMode(MY_RFM69_CS_PIN, OUTPUT);
-#endif
 	RFM69_SPI.begin();
 	(void)RFM69_setRadioMode(RFM69_RADIO_MODE_STDBY);
 	// set configuration, encryption is disabled
@@ -257,33 +251,6 @@ LOCAL void RFM69_interruptHandling(void)
 		if (regIrqFlags2 & RFM69_IRQFLAGS2_FIFOLEVEL) {
 			RFM69_prepareSPITransaction();
 			RFM69_csn(LOW);
-#if defined(__linux__)
-			char data[RFM69_MAX_PACKET_LEN + 1];   // max packet len + 1 byte for the command
-			data[0] = RFM69_REG_FIFO & RFM69_READ_REGISTER;
-			RFM69_SPI.transfern(data, 3);
-
-			RFM69.currentPacket.header.packetLen = data[1];
-			RFM69.currentPacket.header.recipient = data[2];
-
-			if (RFM69.currentPacket.header.packetLen > RFM69_MAX_PACKET_LEN) {
-				RFM69.currentPacket.header.packetLen = RFM69_MAX_PACKET_LEN;
-			}
-
-			data[0] = RFM69_REG_FIFO & RFM69_READ_REGISTER;
-			//SPI.transfern(data, RFM69.currentPacket.header.packetLen - 1); //TODO: Wrong packetLen?
-			RFM69_SPI.transfern(data, RFM69.currentPacket.header.packetLen);
-
-			//(void)memcpy((void *)&RFM69.currentPacket.data[2], (void *)&data[1], RFM69.currentPacket.header.packetLen - 2);   //TODO: Wrong packetLen?
-			(void)memcpy((void *)&RFM69.currentPacket.data[2], (void *)&data[1],
-			             RFM69.currentPacket.header.packetLen - 1);
-
-			if (RFM69.currentPacket.header.version >= RFM69_MIN_PACKET_HEADER_VERSION) {
-				RFM69.currentPacket.payloadLen = min(RFM69.currentPacket.header.packetLen - (RFM69_HEADER_LEN - 1),
-				                                     RFM69_MAX_PACKET_LEN);
-				RFM69.ackReceived = RFM69_getACKReceived(RFM69.currentPacket.header.controlFlags);
-				RFM69.dataReceived = !RFM69.ackReceived;
-			}
-#else
 			(void)RFM69_SPI.transfer(RFM69_REG_FIFO & RFM69_READ_REGISTER);
 			// set reading pointer
 			uint8_t *current = (uint8_t *)&RFM69.currentPacket;
@@ -306,7 +273,6 @@ LOCAL void RFM69_interruptHandling(void)
 					}
 				}
 			}
-#endif
 			RFM69_csn(HIGH);
 			RFM69_concludeSPITransaction();
 		}
@@ -350,6 +316,14 @@ LOCAL uint8_t RFM69_receive(uint8_t *buf, const uint8_t maxBufSize)
 	const rfm69_sequenceNumber_t sequenceNumber = RFM69.currentPacket.header.sequenceNumber;
 	const uint8_t controlFlags = RFM69.currentPacket.header.controlFlags;
 	const rfm69_RSSI_t RSSI = RFM69.currentPacket.RSSI;
+
+	RFM69_DEBUG(PSTR("RFM69:RECV:LEN=%" PRIu8 ",DST=%" PRIu8 ",VER=%" PRIu8 ",SND=%" PRIu8 ",FLG=%" PRIu8 ",SEQ=%" PRIu8 "\n"),
+		(int)payloadLen,
+		(int)RFM69.currentPacket.header.recipient,
+		(int)RFM69.currentPacket.header.version,
+		(int)RFM69.currentPacket.header.sender,
+		(int)RFM69.currentPacket.header.controlFlags,
+		(int)RFM69.currentPacket.header.sequenceNumber);
 
 	if (buf != NULL) {
 		(void)memcpy((void *)buf, (void *)&RFM69.currentPacket.payload, payloadLen);
